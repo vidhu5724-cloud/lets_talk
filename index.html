@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Real Chat App</title>
+  <style>
+    body { font-family: Arial; background:#f2f2f2; text-align:center; }
+    #chat { height:300px; overflow-y:auto; border:1px solid #ccc; background:white; padding:10px; margin:10px;}
+    input, button { padding:8px; margin:5px; }
+    img { border-radius:10px; }
+    #typing { color: gray; font-style: italic; }
+  </style>
+</head>
+<body>
+
+<h2>🔥 Chat App</h2>
+
+<button onclick="login()">Login with Google</button>
+<button onclick="logout()">Logout</button>
+
+<p id="user"></p>
+
+<input id="room" placeholder="Enter room name">
+<button onclick="joinRoom()">Join Chat</button>
+
+<div id="chat"></div>
+<div id="typing"></div>
+
+<input id="msg" placeholder="Type message" oninput="setTyping(true)" onblur="setTyping(false)">
+<button onclick="sendMessage()">Send</button>
+
+<br>
+
+<input type="file" id="img">
+<button onclick="sendImage()">Send Image</button>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { getFirestore, collection, addDoc, onSnapshot, query, orderBy } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-storage.js";
+import { getDatabase, ref as dbRef, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// 🔴 PASTE YOUR FIREBASE CONFIG HERE
+const firebaseConfig = {
+  apiKey: "YOUR_KEY",
+  authDomain: "YOUR_DOMAIN",
+  projectId: "YOUR_ID",
+  storageBucket: "YOUR_BUCKET",
+  messagingSenderId: "XXXX",
+  appId: "XXXX",
+  databaseURL: "YOUR_DATABASE_URL"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth();
+const db = getFirestore();
+const storage = getStorage();
+const rtdb = getDatabase();
+
+let user = null;
+let currentRoom = "";
+let typingTimeout;
+
+// LOGIN
+window.login = async () => {
+  const provider = new GoogleAuthProvider();
+  await signInWithPopup(auth, provider);
+};
+
+// LOGOUT
+window.logout = () => signOut(auth);
+
+// AUTH STATE
+onAuthStateChanged(auth, (u) => {
+  user = u;
+  if (u) {
+    document.getElementById("user").innerText = "Logged in as " + u.displayName;
+
+    const statusRef = dbRef(rtdb, "status/" + u.uid);
+    set(statusRef, { name: u.displayName, state: "online" });
+
+    onDisconnect(statusRef).set({ name: u.displayName, state: "offline" });
+  } else {
+    document.getElementById("user").innerText = "Not logged in";
+  }
+});
+
+// JOIN ROOM
+window.joinRoom = () => {
+  currentRoom = document.getElementById("room").value;
+
+  const q = query(collection(db, "rooms", currentRoom, "messages"), orderBy("time"));
+
+  onSnapshot(q, (snapshot) => {
+    let html = "";
+    snapshot.forEach(doc => {
+      const data = doc.data();
+
+      if (data.image) {
+        html += `<p><b>${data.name}</b><br><img src="${data.image}" width="150"></p>`;
+      } else {
+        html += `<p><b>${data.name}:</b> ${data.text}</p>`;
+      }
+    });
+
+    document.getElementById("chat").innerHTML = html;
+  });
+
+  // TYPING LISTENER
+  const typingRef = dbRef(rtdb, "typing/" + currentRoom);
+  onValue(typingRef, (snap) => {
+    const data = snap.val();
+    if (data && data.name && data.name !== user.displayName) {
+      document.getElementById("typing").innerText = data.name + " is typing...";
+    } else {
+      document.getElementById("typing").innerText = "";
+    }
+  });
+};
+
+// SEND MESSAGE
+window.sendMessage = async () => {
+  const text = document.getElementById("msg").value;
+  if (!text) return;
+
+  await addDoc(collection(db, "rooms", currentRoom, "messages"), {
+    text: text,
+    name: user.displayName,
+    time: Date.now()
+  });
+
+  document.getElementById("msg").value = "";
+  setTyping(false);
+};
+
+// SEND IMAGE
+window.sendImage = async () => {
+  const file = document.getElementById("img").files[0];
+  if (!file) return;
+
+  const storageRef = ref(storage, "images/" + file.name);
+  await uploadBytes(storageRef, file);
+
+  const url = await getDownloadURL(storageRef);
+
+  await addDoc(collection(db, "rooms", currentRoom, "messages"), {
+    image: url,
+    name: user.displayName,
+    time: Date.now()
+  });
+};
+
+// TYPING FUNCTION
+window.setTyping = (isTyping) => {
+  if (!currentRoom || !user) return;
+
+  const typingRef = dbRef(rtdb, "typing/" + currentRoom);
+
+  if (isTyping) {
+    set(typingRef, { name: user.displayName });
+
+    clearTimeout(typingTimeout);
+    typingTimeout = setTimeout(() => {
+      set(typingRef, {});
+    }, 1500);
+  } else {
+    set(typingRef, {});
+  }
+};
+
+</script>
+
+</body>
+</html>
